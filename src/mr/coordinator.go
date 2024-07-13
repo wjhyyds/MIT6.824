@@ -16,13 +16,13 @@ import (
 
 type Coordinator struct {
 	// Your definitions here.
-	taskId     int
-	reduceNum  int
-	files      []string
-	mapTask    chan *Task
-	reduceTask chan *Task
-	tasks      map[int]*Task
-	phase      Phase
+	TaskId     int
+	ReduceNum  int
+	Files      []string
+	MapTask    chan *Task
+	ReduceTask chan *Task
+	Tasks      map[int]*Task
+	Phase      Phase
 }
 
 var mu sync.Mutex
@@ -31,15 +31,15 @@ var mu sync.Mutex
 func (c *Coordinator) AssignTask(args *TaskArgs, task *Task) error {
 	mu.Lock()
 	defer mu.Unlock()
-	switch c.phase {
+	switch c.Phase {
 	case MapPhase:
 		{
-			if len(c.mapTask) > 0 {
-				*task = *<-c.mapTask
+			if len(c.MapTask) > 0 {
+				*task = *<-c.MapTask
 				task.State = Mapping
 				task.Begin = time.Now()
-				fmt.Println(task)
-				log.Fatalf("[INFO] assign map task %v", task.Id)
+				// fmt.Println(task)
+				fmt.Printf("[INFO] assign map task %v\n", task.Id)
 			} else {
 				task.State = Waiting
 				c.toNextPhase()
@@ -47,11 +47,11 @@ func (c *Coordinator) AssignTask(args *TaskArgs, task *Task) error {
 		}
 	case ReducePhase:
 		{
-			if len(c.reduceTask) > 0 {
-				task = <-c.reduceTask
+			if len(c.ReduceTask) > 0 {
+				*task = *<-c.ReduceTask
 				task.State = Reducing
 				task.Begin = time.Now()
-				log.Fatalf("[INFO] assign reduce task %v", task.Id)
+				fmt.Printf("[INFO] assign reduce task %v", task.Id)
 			} else {
 				task.State = Waiting
 				c.toNextPhase()
@@ -70,8 +70,8 @@ func (c *Coordinator) AssignTask(args *TaskArgs, task *Task) error {
 }
 
 func (c *Coordinator) generateId() int {
-	id := c.taskId
-	c.taskId++
+	id := c.TaskId
+	c.TaskId++
 	return id
 }
 
@@ -81,25 +81,25 @@ func (c *Coordinator) makeMapTasks(files []string) {
 		task := &Task{
 			Id:        id,
 			Files:     []string{v},
-			ReduceNum: c.reduceNum,
+			ReduceNum: c.ReduceNum,
 			State:     Waiting,
 		}
-		c.tasks[id] = task
-		c.mapTask <- task
+		c.Tasks[id] = task
+		c.MapTask <- task
 	}
 }
 
 func (c *Coordinator) makeReduceTasks() {
-	for i := 0; i < c.reduceNum; i++ {
+	for i := 0; i < c.ReduceNum; i++ {
 		id := c.generateId()
 		task := &Task{
 			Id:        id,
 			Files:     collectReduceFiles(i),
-			ReduceNum: c.reduceNum,
+			ReduceNum: c.ReduceNum,
 			State:     Waiting,
 		}
-		c.tasks[id] = task
-		c.reduceTask <- task
+		c.Tasks[id] = task
+		c.ReduceTask <- task
 	}
 }
 
@@ -117,7 +117,7 @@ func collectReduceFiles(k int) (s []string) {
 
 func (c *Coordinator) toNextPhase() {
 	alldone := func() bool {
-		for _, v := range c.tasks {
+		for _, v := range c.Tasks {
 			if v.State != Done {
 				return false
 			}
@@ -125,21 +125,21 @@ func (c *Coordinator) toNextPhase() {
 		return true
 	}
 
-	if c.phase == MapPhase {
+	if c.Phase == MapPhase {
 		if alldone() {
 			c.makeReduceTasks()
-			c.phase = ReducePhase
+			c.Phase = ReducePhase
 		}
-	} else if c.phase == ReducePhase {
+	} else if c.Phase == ReducePhase {
 		// 进入reducephase保证所有map任务均完成
 		if alldone() {
-			c.phase = AllDone
+			c.Phase = AllDone
 		}
 	}
 }
 
 func (c *Coordinator) SetTaskDone(args int, reply *Task) error {
-	reply = c.tasks[args]
+	reply = c.Tasks[args]
 	reply.State = Done
 	return nil
 }
@@ -166,7 +166,7 @@ func (c *Coordinator) Done() bool {
 	// Your code here.
 	mu.Lock()
 	defer mu.Unlock()
-	if c.phase == AllDone {
+	if c.Phase == AllDone {
 		fmt.Println("[INFO] all tasks done,coordinator exit")
 		ret = true
 	}
@@ -180,12 +180,12 @@ func (c *Coordinator) Done() bool {
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	// Your code here.
 	c := Coordinator{
-		files:      files,
-		reduceNum:  nReduce,
-		mapTask:    make(chan *Task, len(files)),
-		reduceTask: make(chan *Task, nReduce),
-		tasks:      make(map[int]*Task, len(files)+nReduce),
-		phase:      MapPhase,
+		Files:      files,
+		ReduceNum:  nReduce,
+		MapTask:    make(chan *Task, len(files)),
+		ReduceTask: make(chan *Task, nReduce),
+		Tasks:      make(map[int]*Task, len(files)+nReduce),
+		Phase:      MapPhase,
 	}
 	c.makeMapTasks(files)
 
