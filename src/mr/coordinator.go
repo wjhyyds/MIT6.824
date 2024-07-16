@@ -1,7 +1,7 @@
 package mr
 
 import (
-	"fmt"
+	"errors"
 	"io/ioutil"
 	"log"
 	"net"
@@ -38,8 +38,9 @@ func (c *Coordinator) AssignTask(args *TaskArgs, task *Task) error {
 				*task = *<-c.MapTask
 				task.State = Mapping
 				task.Begin = time.Now()
-				// fmt.Println(task)
-				fmt.Printf("[INFO] assign map task %v\n", task.Id)
+				// 需要手动更新c.tasks
+				c.Tasks[task.Id] = task
+				log.Printf("[INFO] assign map task %v\n", task.Id)
 			} else {
 				task.State = Waiting
 				c.toNextPhase()
@@ -51,7 +52,8 @@ func (c *Coordinator) AssignTask(args *TaskArgs, task *Task) error {
 				*task = *<-c.ReduceTask
 				task.State = Reducing
 				task.Begin = time.Now()
-				fmt.Printf("[INFO] assign reduce task %v", task.Id)
+				c.Tasks[task.Id] = task
+				log.Printf("[INFO] assign reduce task %v", task.Id)
 			} else {
 				task.State = Waiting
 				c.toNextPhase()
@@ -139,8 +141,35 @@ func (c *Coordinator) toNextPhase() {
 }
 
 func (c *Coordinator) SetTaskDone(args int, reply *Task) error {
-	reply = c.Tasks[args]
-	reply.State = Done
+	mu.Lock()
+	defer mu.Unlock()
+
+	task, ok := c.Tasks[args]
+	if !ok {
+		log.Fatalln("[ERROR] non-existent task id ", args)
+		return errors.New("Bad task id" + strconv.Itoa(args))
+	}
+
+	switch task.State {
+	case Mapping, Reducing:
+		{
+			task.State = Done
+			log.Printf("[INFO] task %v is set done", task.Id)
+		}
+	case Done:
+		{
+			log.Printf("[INFO] task %v is already done", task.Id)
+		}
+	case Waiting:
+		{
+			log.Printf("[INFO] task %v has been assigned to another worker", task.Id)
+		}
+	default:
+		{
+			log.Fatalln("[ERROR] undefined task state")
+		}
+	}
+
 	return nil
 }
 
@@ -167,7 +196,7 @@ func (c *Coordinator) Done() bool {
 	mu.Lock()
 	defer mu.Unlock()
 	if c.Phase == AllDone {
-		fmt.Println("[INFO] all tasks done,coordinator exit")
+		log.Println("[INFO] all tasks done,coordinator exit")
 		ret = true
 	}
 
@@ -190,5 +219,36 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.makeMapTasks(files)
 
 	c.server()
+	go c.CrashDetector()
 	return &c
+}
+
+func (c *Coordinator) CrashDetector() {
+	// 每2s检查一次
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		mu.Lock()
+		if c.Phase == AllDone {
+			mu.Unlock()
+			break
+		}
+
+		for _, task := range c.Tasks {
+			// log.Println(*task)
+			if (task.State == Mapping || task.State == Reducing) && time.Since(task.Begin) > 10*time.Second {
+				log.Printf("[INFO] task %v is crash,begin at %v", task.Id, task.Begin)
+				if task.State == Mapping {
+					task.State = Waiting
+					c.MapTask <- task
+				} else {
+					task.State = Waiting
+					c.ReduceTask <- task
+				}
+			}
+		}
+
+		mu.Unlock()
+	}
 }

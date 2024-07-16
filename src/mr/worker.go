@@ -43,10 +43,9 @@ func GetTask() Task {
 	ret := Task{}
 	ok := call("Coordinator.AssignTask", &args, &ret)
 	if !ok {
-		fmt.Println("[ERROR] call failed")
-	} else {
-		fmt.Printf("[INFO] get task:%v\n", ret)
+		log.Fatalln("[ERROR] call failed")
 	}
+	// log.Printf("[INFO] get task %v", ret)
 	return ret
 }
 
@@ -57,37 +56,37 @@ func Worker(mf mapf, rf reducef) {
 loop:
 	for {
 		task = GetTask()
-		fmt.Println(task)
+		// fmt.Println(task)
 		switch task.State {
 		case Waiting:
 			{
-				fmt.Println("[INFO] no idle task,waiting")
+				log.Println("[INFO] no idle task,waiting")
 				time.Sleep(time.Second)
 			}
 		case Mapping:
 			{
-				fmt.Printf("[INFO] begin map task %v", task.Id)
+				log.Printf("[INFO] begin map task %v", task.Id)
 				Map(mf, &task)
-				fmt.Printf("[INFO] finish map task %v", task.Id)
+				// log.Printf("[INFO] finish map task %v", task.Id)
 
 				callDone(task.Id)
 			}
 		case Reducing:
 			{
-				fmt.Printf("[INFO] begin reduce task %v", task.Id)
+				log.Printf("[INFO] begin reduce task %v", task.Id)
 				Reduce(rf, &task)
-				fmt.Printf("[INFO] finish reduce task %v", task.Id)
+				// log.Printf("[INFO] finish reduce task %v", task.Id)
 
 				callDone(task.Id)
 			}
 		case Exit:
 			{
-				fmt.Println("[INFO] exit")
+				log.Println("[INFO] exit")
 				break loop
 			}
 		default:
 			{
-				fmt.Println("[ERROR] wrong state,exit")
+				log.Fatalln("[ERROR] wrong state,exit")
 				break loop
 			}
 		}
@@ -181,7 +180,7 @@ func shuffle(files []string) []KeyValue {
 // 告知第i个任务结束
 func callDone(id int) {
 	if ok := call("Coordinator.SetTaskDone", id, &Task{}); !ok {
-		fmt.Println("[ERROR] call failed")
+		log.Fatalln("[ERROR] call failed")
 	}
 }
 
