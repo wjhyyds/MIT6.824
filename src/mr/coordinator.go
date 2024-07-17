@@ -19,8 +19,8 @@ type Coordinator struct {
 	TaskId     int
 	ReduceNum  int
 	Files      []string
-	MapTask    chan *Task
-	ReduceTask chan *Task
+	MapTask    chan int
+	ReduceTask chan int
 	Tasks      map[int]*Task
 	Phase      Phase
 }
@@ -35,11 +35,11 @@ func (c *Coordinator) AssignTask(args *TaskArgs, task *Task) error {
 	case MapPhase:
 		{
 			if len(c.MapTask) > 0 {
-				*task = *<-c.MapTask
-				task.State = Mapping
-				task.Begin = time.Now()
-				// 需要手动更新c.tasks
-				c.Tasks[task.Id] = task
+				id := <-c.MapTask
+				tmp := c.Tasks[id]
+				tmp.State = Mapping
+				tmp.Begin = time.Now()
+				*task = *tmp
 				log.Printf("[INFO] assign map task %v\n", task.Id)
 			} else {
 				task.State = Waiting
@@ -49,10 +49,11 @@ func (c *Coordinator) AssignTask(args *TaskArgs, task *Task) error {
 	case ReducePhase:
 		{
 			if len(c.ReduceTask) > 0 {
-				*task = *<-c.ReduceTask
-				task.State = Reducing
-				task.Begin = time.Now()
-				c.Tasks[task.Id] = task
+				id := <-c.ReduceTask
+				tmp := c.Tasks[id]
+				tmp.State = Reducing
+				tmp.Begin = time.Now()
+				*task = *tmp
 				log.Printf("[INFO] assign reduce task %v", task.Id)
 			} else {
 				task.State = Waiting
@@ -87,7 +88,7 @@ func (c *Coordinator) makeMapTasks(files []string) {
 			State:     Waiting,
 		}
 		c.Tasks[id] = task
-		c.MapTask <- task
+		c.MapTask <- id
 	}
 }
 
@@ -101,7 +102,7 @@ func (c *Coordinator) makeReduceTasks() {
 			State:     Waiting,
 		}
 		c.Tasks[id] = task
-		c.ReduceTask <- task
+		c.ReduceTask <- id
 	}
 }
 
@@ -211,8 +212,8 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
 		Files:      files,
 		ReduceNum:  nReduce,
-		MapTask:    make(chan *Task, len(files)),
-		ReduceTask: make(chan *Task, nReduce),
+		MapTask:    make(chan int, len(files)),
+		ReduceTask: make(chan int, nReduce),
 		Tasks:      make(map[int]*Task, len(files)+nReduce),
 		Phase:      MapPhase,
 	}
@@ -225,7 +226,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 func (c *Coordinator) CrashDetector() {
 	// 每2s检查一次
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -241,10 +242,10 @@ func (c *Coordinator) CrashDetector() {
 				log.Printf("[INFO] task %v is crash,begin at %v", task.Id, task.Begin)
 				if task.State == Mapping {
 					task.State = Waiting
-					c.MapTask <- task
+					c.MapTask <- task.Id
 				} else {
 					task.State = Waiting
-					c.ReduceTask <- task
+					c.ReduceTask <- task.Id
 				}
 			}
 		}
