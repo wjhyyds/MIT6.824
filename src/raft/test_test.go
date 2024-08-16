@@ -1224,7 +1224,7 @@ func TestSnapshotAllCrash3D(t *testing.T) {
 }
 
 // do servers correctly initialize their in-memory copy of the snapshot, making
-// sure that future writes to persistent state don't lose state?
+// sure that future writes to persistent role don't lose role?
 func TestSnapshotInit3D(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, true)
