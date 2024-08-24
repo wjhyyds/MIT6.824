@@ -1,6 +1,9 @@
 package raft
 
-import "errors"
+import (
+	"errors"
+	"sync"
+)
 
 var OutOfBound = errors.New("OutOfBound")
 
@@ -21,6 +24,9 @@ type Log struct {
 
 	applied   int
 	committed int
+
+	logger      *Logger
+	toBeApplied sync.Cond
 }
 
 func NewLog() Log {
@@ -51,11 +57,37 @@ func (l *Log) toLogIndex(index int) int {
 }
 
 func (l *Log) committedTo(index int) {
-	l.committed = max(l.committed, index)
+	if l.committed < index {
+		old := l.committed
+		l.committed = index
+		l.toBeApplied.Signal()
+		l.logger.updateCommitted(old)
+	}
 }
 
 func (l *Log) appliedTo(index int) {
-	l.applied = max(l.applied, index)
+	if l.applied < index {
+		old := l.applied
+		l.applied = index
+		l.logger.updateApplied(old)
+	}
+}
+
+// log = log[:index]
+func (l *Log) truncateAfter(index int) {
+	if index <= l.firstIndex() || index > l.lastIndex() {
+		return
+	}
+	index = l.toLogIndex(index)
+	l.entries = l.entries[:index]
+}
+
+func (l *Log) newCommitEntries() []Entry {
+	start, end := l.applied+1, l.committed+1
+	if start >= end {
+		return nil
+	}
+	return l.clone(start, end)
 }
 
 // clone [start,end)

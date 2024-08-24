@@ -172,7 +172,32 @@ func (l *Logger) recvAR(args *AppendEntriesArgs) {
 	l.printf(LRPE, "S%v <- S%v AR (T:%v CI:%v PI:%v PT:%v LN:%v)", r.me, args.From, args.Term, args.Committed, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries))
 }
 
+func (l *Logger) rejectEnts(args *AppendEntriesArgs) {
+	r := l.r
+	l.printf(LRPE, "N%v !e<- N%v", r.me, args.From)
+}
+
+func (l *Logger) acceptEnts(args *AppendEntriesArgs) {
+	r := l.r
+	l.printf(LRPE, "N%v &e<- N%v", r.me, args.From)
+}
+
 func (l *Logger) recvARR(reply *AppendEntriesReply) {
 	r := l.r
 	l.printf(LRPE, "S%v <- S%v ARR (T:%v St:%v CT:%v FCI:%v LI:%v)", r.me, reply.From, reply.Term, stMap[reply.Status], reply.Xterm, reply.Xindex, reply.Xlen)
+}
+
+func (l *Logger) updateTrackers(peer int, oldTracker, newTracker Tracker) {
+	r := l.r
+	l.printf(LRPE, "N%v ^pr N%v (NI:%v MI:%v) -> (NI:%v MI:%v)", r.me, peer, oldTracker.next, oldTracker.match, newTracker.next, newTracker.match)
+}
+
+func (l *Logger) updateCommitted(oldCommitted int) {
+	r := l.r
+	l.printf(LRPE, "N%v ^ci (CI:%v) -> (CI:%v)", r.me, oldCommitted, r.log.committed)
+}
+
+func (l *Logger) updateApplied(oldApplied int) {
+	r := l.r
+	l.printf(LRPE, "N%v ^ai (AI:%v) -> (AI:%v)", r.me, oldApplied, r.log.applied)
 }

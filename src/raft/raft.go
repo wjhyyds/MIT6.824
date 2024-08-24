@@ -17,18 +17,6 @@ const (
 	heatbeatInterval = 150
 )
 
-type ApplyMsg struct {
-	CommandValid bool
-	Command      interface{}
-	CommandIndex int
-
-	// For 3D:
-	SnapshotValid bool
-	Snapshot      []byte
-	SnapshotTerm  int
-	SnapshotIndex int
-}
-
 // A Go object implementing a single Raft peer.
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's role
@@ -57,7 +45,7 @@ type Raft struct {
 
 	trackers []Tracker
 
-	logger *Logger
+	logger Logger
 }
 
 func (rf *Raft) GetState() (int, bool) {
@@ -93,14 +81,24 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (3D).
 }
 
-func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
-
+func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) {
 	// Your code here (3B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
-	return index, term, isLeader
+	isLeader = !rf.killed() && rf.role == Leader
+	if !isLeader {
+		return 0, 0, false
+	}
+
+	index = rf.log.lastIndex() + 1
+	term = rf.term
+	rf.log.entries = append(rf.log.entries, Entry{Index: index, Term: term, Cmd: command})
+	rf.persist()
+
+	rf.broadcastAppendEntries(true)
+
+	return
 }
 
 func (rf *Raft) Kill() {
@@ -145,12 +143,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
+
 	rf.applyCh = applyCh
 
-	rf.logger = makeLogger(false, "out")
+	rf.logger = *makeLogger(false, "out")
 	rf.logger.r = rf
 
 	rf.log = NewLog()
+	rf.log.logger = &rf.logger
+	rf.log.toBeApplied = *sync.NewCond(&rf.mu)
 
 	rf.term = 0
 	rf.votedFor = None
@@ -168,6 +169,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+	go rf.committer()
 
 	return rf
 }

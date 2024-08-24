@@ -40,8 +40,9 @@ func (rf *Raft) checkState(m Message) (eligible bool) {
 
 	case VoteReply:
 		eligible = rf.role == Candidate && rf.term == m.ArgsTerm
+
 	case AppendReply:
-		eligible = rf.role == Leader && rf.term == m.ArgsTerm
+		eligible = rf.role == Leader && rf.term == m.ArgsTerm && rf.trackers[m.From].next-1 == m.PrevLogIndex
 	}
 	return
 }
