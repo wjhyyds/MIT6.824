@@ -26,7 +26,7 @@ func (rf *Raft) checkTerm(m Message) (valid, termChanged bool) {
 	}
 
 	valid = true
-	if m.Term > rf.term || m.Type == Append {
+	if m.Term > rf.term || m.Type == Append || m.Type == Snap {
 		termChanged = rf.becomeFollower(m.Term)
 	}
 	return
@@ -35,14 +35,18 @@ func (rf *Raft) checkTerm(m Message) (valid, termChanged bool) {
 // return true if the raft peer is eligible to handle the message.
 func (rf *Raft) checkState(m Message) (eligible bool) {
 	switch m.Type {
-	case Vote, Append:
+	case Vote, Append, Snap:
 		eligible = rf.role == Follower // 在checkTerm中，不符号的Candidate和Leader都会成为Follwer
 
 	case VoteReply:
 		eligible = rf.role == Candidate && rf.term == m.ArgsTerm
 
+	// AppendReply/SnapshotReply需要确保对应的是最新发送的Append/Snapshot
 	case AppendReply:
 		eligible = rf.role == Leader && rf.term == m.ArgsTerm && rf.trackers[m.From].next-1 == m.PrevLogIndex
+
+	case SnapReply:
+		eligible = rf.role == Leader && rf.term == m.ArgsTerm && rf.needSnapshot(m.From)
 	}
 	return
 }

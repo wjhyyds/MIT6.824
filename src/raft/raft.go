@@ -67,10 +67,10 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	if e.Encode(rf.term) != nil || e.Encode(rf.votedFor) != nil || e.Encode(rf.log.entries) != nil {
+	if e.Encode(rf.term) != nil || e.Encode(rf.votedFor) != nil || e.Encode(rf.log.entries) != nil || e.Encode(rf.log.snapshot.Index) != nil || e.Encode(rf.log.snapshot.Term) != nil {
 		panic("Encode failed")
 	}
-	rf.persister.Save(w.Bytes(), nil)
+	rf.persister.Save(w.Bytes(), rf.log.snapshot.Data)
 }
 
 // restore previously persisted role.
@@ -81,17 +81,11 @@ func (rf *Raft) readPersist(data []byte) {
 
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
-	if d.Decode(&rf.term) != nil || d.Decode(&rf.votedFor) != nil || d.Decode(&rf.log.entries) != nil {
+	if d.Decode(&rf.term) != nil || d.Decode(&rf.votedFor) != nil || d.Decode(&rf.log.entries) != nil || d.Decode(&rf.log.snapshot.Index) != nil || d.Decode(&rf.log.snapshot.Term) != nil {
 		panic("Decode failed")
 	}
-}
 
-// the service says it has created a snapshot that has
-// all info up to and including index. this means the
-// service no longer needs the log through (and including)
-// that index. Raft should now trim its log as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (3D).
+	rf.log.compactedTo(Snapshot{Data: rf.persister.ReadSnapshot(), Index: rf.log.snapshot.Index, Term: rf.log.snapshot.Term})
 }
 
 func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) {

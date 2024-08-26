@@ -105,6 +105,8 @@ func (rf *Raft) sendAppendEntries(args *AppendEntriesArgs) {
 	}
 }
 
+// tracker/committed/entries变化后会立即广播(force==true)
+// 加速主从状态同步
 func (rf *Raft) broadcastAppendEntries(force bool) {
 	for i := range rf.peers {
 		if i == rf.me {
@@ -114,6 +116,11 @@ func (rf *Raft) broadcastAppendEntries(force bool) {
 		if force || rf.hasNewEntry(i) {
 			args := rf.newAppendEntriesArgs(i)
 			go rf.sendAppendEntries(args)
+		}
+
+		if rf.needSnapshot(i) {
+			args := rf.newInstallSnapshotArgs(i)
+			go rf.sendInstallSnapshot(args)
 		}
 	}
 }

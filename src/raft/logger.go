@@ -10,7 +10,7 @@ import (
 
 // true to turn on debugging/logging.
 const (
-	debug     = true
+	debug     = false
 	LOGTOFILE = false
 	printEnts = false
 )
@@ -120,9 +120,7 @@ func (l *Logger) becomeFollower(oldTerm int) {
 	l.printf(INFO, "S%d become Follower(T:%d -> T:%d)", r.me, oldTerm, r.term)
 }
 
-//
-// leader election events.
-//
+// leader election
 
 func (l *Logger) bcastRV() {
 	r := l.r
@@ -145,20 +143,13 @@ func (l *Logger) rejectVote(args *RequestVoteArgs, idx int, term int) {
 	l.printf(ELEC, "S%d !v-> S%d (CID:%d CT:%d ID:%d T%d)", l.r.me, args.From, args.LastLogIndex, args.LastLogTerm, idx, term)
 }
 
-//
-// log replication events.
-//
+// log replication
 
 var stMap = [...]string{
 	"RJ",  // rejected.
 	"MT",  // matched.
 	"ENF", // entry not found
 	"TC",  // term conflict
-}
-
-func (l *Logger) appendEnts(ents []Entry) {
-	r := l.r
-	l.printf(LRPE, "S%v +e (LN:%v)", r.me, len(ents))
 }
 
 func (l *Logger) sendAR(args *AppendEntriesArgs) {
@@ -200,4 +191,36 @@ func (l *Logger) updateCommitted(oldCommitted int) {
 func (l *Logger) updateApplied(oldApplied int) {
 	r := l.r
 	l.printf(LRPE, "N%v ^ai (AI:%v) -> (AI:%v)", r.me, oldApplied, r.log.applied)
+}
+
+// log compaction
+
+func (l *Logger) compactedTo(lastLogIndex, lastLogTerm int) {
+	r := l.r
+	l.printf(SNAP, "N%v cp (SI:%v ST:%v LI:%v LT:%v)", r.me, r.log.snapshot.Index, r.log.snapshot.Term, lastLogIndex, lastLogTerm)
+}
+
+func (l *Logger) sendIS(args *InstallSnapshotArgs) {
+	r := l.r
+	l.printf(SNAP, "N%v s-> N%v (SI:%v ST:%v)", r.me, args.To, args.Snapshot.Index, args.Snapshot.Term)
+}
+
+func (l *Logger) recvIS(args *InstallSnapshotArgs) {
+	r := l.r
+	l.printf(SNAP, "N%v <- N%v IS (SI:%v ST:%v)", r.me, args.From, args.Snapshot.Index, args.Snapshot.Term)
+}
+
+func (l *Logger) recvISR(reply *InstallSnapshotReply) {
+	r := l.r
+	l.printf(SNAP, "N%v <- N%v ISR", r.me, reply.From)
+}
+
+func (l *Logger) pullSnap(snapshotIndex int) {
+	r := l.r
+	l.printf(SNAP, "N%v pull SNP (SI:%v)", r.me, snapshotIndex)
+}
+
+func (l *Logger) pushSnap(snapshotIndex, snapshotTerm int) {
+	r := l.r
+	l.printf(SNAP, "N%v push SNP (SI:%v ST:%v)", r.me, snapshotIndex, snapshotTerm)
 }

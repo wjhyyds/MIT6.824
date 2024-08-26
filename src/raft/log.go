@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-var OutOfBound = errors.New("OutOfBound")
+var ErrOutOfBound = errors.New("OutOfBound")
 
 type Entry struct {
 	Index int
@@ -27,6 +27,8 @@ type Log struct {
 
 	logger      *Logger
 	toBeApplied sync.Cond
+
+	snapshot Snapshot
 }
 
 func NewLog() Log {
@@ -47,7 +49,7 @@ func (l *Log) lastIndex() int {
 
 func (l *Log) term(index int) (int, error) {
 	if index < l.firstIndex() || index > l.lastIndex() {
-		return 0, OutOfBound
+		return 0, ErrOutOfBound
 	}
 	return l.entries[l.toLogIndex(index)].Term, nil
 }
@@ -71,6 +73,28 @@ func (l *Log) appliedTo(index int) {
 		l.applied = index
 		l.logger.updateApplied(old)
 	}
+}
+
+func (l *Log) compactedTo(snapshot Snapshot) {
+	var suffix []Entry
+	dummy := Entry{Index: snapshot.Index, Term: snapshot.Term}
+	start := snapshot.Index + 1
+	if start <= l.lastIndex() {
+		start = l.toLogIndex(start)
+		suffix = l.entries[start:]
+	}
+
+	l.entries = append(make([]Entry, 1), suffix...)
+	l.snapshot = snapshot
+
+	l.entries[0] = dummy
+
+	l.committedTo(l.snapshot.Index)
+	l.appliedTo(l.snapshot.Index)
+
+	lastLogIndex := l.lastIndex()
+	lastLogTerm, _ := l.term(lastLogIndex)
+	l.logger.compactedTo(lastLogIndex, lastLogTerm)
 }
 
 // log = log[:index]
