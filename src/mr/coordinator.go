@@ -40,7 +40,7 @@ func (c *Coordinator) AssignTask(args *TaskArgs, task *Task) error {
 				tmp.State = Mapping
 				tmp.Begin = time.Now()
 				*task = *tmp
-				log.Printf("[INFO] assign map task %v\n", task.Id)
+				// log.Printf("[INFO] assign map task %v\n", task.Id)
 			} else {
 				task.State = Waiting
 				c.toNextPhase()
@@ -54,7 +54,7 @@ func (c *Coordinator) AssignTask(args *TaskArgs, task *Task) error {
 				tmp.State = Reducing
 				tmp.Begin = time.Now()
 				*task = *tmp
-				log.Printf("[INFO] assign reduce task %v", task.Id)
+				// log.Printf("[INFO] assign reduce task %v", task.Id)
 			} else {
 				task.State = Waiting
 				c.toNextPhase()
@@ -155,15 +155,15 @@ func (c *Coordinator) SetTaskDone(args int, reply *Task) error {
 	case Mapping, Reducing:
 		{
 			task.State = Done
-			log.Printf("[INFO] task %v is set done", task.Id)
+			// log.Printf("[INFO] task %v is set done", task.Id)
 		}
 	case Done:
 		{
-			log.Printf("[INFO] task %v is already done", task.Id)
+			// log.Printf("[INFO] task %v is already done", task.Id)
 		}
 	case Waiting:
 		{
-			log.Printf("[INFO] task %v has been assigned to another worker", task.Id)
+			// log.Printf("[INFO] task %v has been assigned to another worker", task.Id)
 		}
 	default:
 		{
@@ -197,7 +197,7 @@ func (c *Coordinator) Done() bool {
 	mu.Lock()
 	defer mu.Unlock()
 	if c.Phase == AllDone {
-		log.Println("[INFO] all tasks done,coordinator exit")
+		// log.Println("[INFO] all tasks done,coordinator exit")
 		ret = true
 	}
 
@@ -239,7 +239,7 @@ func (c *Coordinator) CrashDetector() {
 		for _, task := range c.Tasks {
 			// log.Println(*task)
 			if (task.State == Mapping || task.State == Reducing) && time.Since(task.Begin) > 10*time.Second {
-				log.Printf("[INFO] task %v is crash,begin at %v", task.Id, task.Begin)
+				// log.Printf("[INFO] task %v is crash,begin at %v", task.Id, task.Begin)
 				if task.State == Mapping {
 					task.State = Waiting
 					c.MapTask <- task.Id

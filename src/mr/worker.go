@@ -60,12 +60,12 @@ loop:
 		switch task.State {
 		case Waiting:
 			{
-				log.Println("[INFO] no idle task,waiting")
+				// log.Println("[INFO] no idle task,waiting")
 				time.Sleep(time.Second)
 			}
 		case Mapping:
 			{
-				log.Printf("[INFO] begin map task %v", task.Id)
+				// log.Printf("[INFO] begin map task %v", task.Id)
 				Map(mf, &task)
 				// log.Printf("[INFO] finish map task %v", task.Id)
 
@@ -73,7 +73,7 @@ loop:
 			}
 		case Reducing:
 			{
-				log.Printf("[INFO] begin reduce task %v", task.Id)
+				// log.Printf("[INFO] begin reduce task %v", task.Id)
 				Reduce(rf, &task)
 				// log.Printf("[INFO] finish reduce task %v", task.Id)
 
@@ -81,7 +81,7 @@ loop:
 			}
 		case Exit:
 			{
-				log.Println("[INFO] exit")
+				// log.Println("[INFO] exit")
 				break loop
 			}
 		default:
