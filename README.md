@@ -11,5 +11,8 @@
 - [x] Lab3:Raft
 
 ![lab3](docs/Lab3.png)
+![lab3-1](docs/Lab3-1.png)
+![lab3-2](docs/Lab3-2.png)
+
 - [ ] Lab 4:Fault-tolerant Key/Value Service
 - [ ] Lab 5:Sharded Key/Value Service
