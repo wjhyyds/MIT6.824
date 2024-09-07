@@ -113,15 +113,14 @@ func (rf *Raft) broadcastAppendEntries(force bool) {
 			continue
 		}
 
-		if force || rf.hasNewEntry(i) {
+		if rf.needSnapshot(i) {
+			args := rf.newInstallSnapshotArgs(i)
+			go rf.sendInstallSnapshot(args)
+		} else if force || rf.hasNewEntry(i) {
 			args := rf.newAppendEntriesArgs(i)
 			go rf.sendAppendEntries(args)
 		}
 
-		if rf.needSnapshot(i) {
-			args := rf.newInstallSnapshotArgs(i)
-			go rf.sendInstallSnapshot(args)
-		}
 	}
 }
 

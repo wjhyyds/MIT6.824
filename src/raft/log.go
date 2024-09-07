@@ -28,11 +28,13 @@ type Log struct {
 	logger      *Logger
 	toBeApplied sync.Cond
 
-	snapshot Snapshot
+	snapshot           Snapshot
+	hasPendingSnapshot bool
 }
 
 func NewLog() Log {
 	return Log{
+		snapshot:  Snapshot{Data: nil, Index: 0, Term: 0},
 		entries:   []Entry{{Index: 0, Term: 0}}, // dummy entry
 		applied:   0,
 		committed: 0,

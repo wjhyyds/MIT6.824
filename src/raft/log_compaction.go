@@ -73,7 +73,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		return
 	}
 
-	
+	// 该peer能够跟上leader,不需要snapshot
 	if args.Snapshot.Index <= rf.log.committed {
 		return
 	}
@@ -83,16 +83,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		defer rf.persist()
 	}
 
-	applyMsg := ApplyMsg{
-		SnapshotValid: true,
-		Snapshot:      args.Snapshot.Data,
-		SnapshotIndex: args.Snapshot.Index,
-		SnapshotTerm:  args.Snapshot.Term,
-	}
-
-	rf.applyCh <- applyMsg
-	rf.logger.pushSnap(applyMsg.SnapshotIndex, applyMsg.SnapshotTerm)
-
+	rf.log.hasPendingSnapshot = true
+	rf.log.toBeApplied.Signal()
 }
 
 func (rf *Raft) handleInstallSnapshotReply(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {

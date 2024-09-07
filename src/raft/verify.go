@@ -35,8 +35,11 @@ func (rf *Raft) checkTerm(m Message) (valid, termChanged bool) {
 // return true if the raft peer is eligible to handle the message.
 func (rf *Raft) checkState(m Message) (eligible bool) {
 	switch m.Type {
-	case Vote, Append, Snap:
+	case Vote, Append:
 		eligible = rf.role == Follower // 在checkTerm中，不符号的Candidate和Leader都会成为Follwer
+
+	case Snap:
+		eligible = rf.role == Follower && !rf.log.hasPendingSnapshot
 
 	case VoteReply:
 		eligible = rf.role == Candidate && rf.term == m.ArgsTerm
