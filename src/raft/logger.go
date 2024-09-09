@@ -19,7 +19,7 @@ func (l *Logger) printEnts(topic logTopic, me int, ents []Entry) {
 	if printEnts {
 		for _, ent := range ents {
 			if ent.Index != 0 {
-				l.printf(topic, "N%v    (I:%v T:%v D:%v)", me, ent.Index, ent.Term, ent.Cmd.(int))
+				l.printf(topic, "N%v    (I:%v T:%v D:%+v)", me, ent.Index, ent.Term, ent.Cmd)
 				// l.printf(topic, "N%v    (I:%v T:%v)", me, ent.Index, ent.Term)
 			}
 		}
@@ -223,4 +223,15 @@ func (l *Logger) pullSnap(snapshotIndex int) {
 func (l *Logger) pushSnap(snapshotIndex, snapshotTerm int) {
 	r := l.r
 	l.printf(SNAP, "N%v push SNP (SI:%v ST:%v)", r.me, snapshotIndex, snapshotTerm)
+}
+
+// raft
+func (l *Logger) recvCmd(index int, command interface{}) {
+	r := l.r
+	l.printf(INFO, "N%v recv Cmd %+v at %d", r.me, command, index)
+}
+
+func (l *Logger) commitLoop() {
+	r := l.r
+	l.printf(INFO, "S%d begin a commit loop", r.me)
 }

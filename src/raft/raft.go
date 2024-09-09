@@ -50,7 +50,7 @@ type Raft struct {
 	logger Logger
 }
 
-func (rf *Raft) GetState() (int, bool) {
+func (rf *Raft) GetState() (term int, isLeader bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -101,11 +101,12 @@ func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) 
 	index = rf.log.lastIndex() + 1
 	term = rf.term
 	rf.log.entries = append(rf.log.entries, Entry{Index: index, Term: term, Cmd: command})
+	rf.logger.recvCmd(index, command)
 	rf.persist()
 
 	rf.broadcastAppendEntries(true)
 
-	return
+	return index, term, isLeader
 }
 
 func (rf *Raft) Kill() {

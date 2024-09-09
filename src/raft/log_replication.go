@@ -88,7 +88,10 @@ func (rf *Raft) findFirstConflict(leaderPrevLogIndex int) (conflictTerm, index i
 
 func (rf *Raft) quorumMatch(index int) bool {
 	match := 1
-	for _, tracker := range rf.trackers {
+	for i, tracker := range rf.trackers {
+		if i == rf.me {
+			continue
+		}
 		if tracker.match >= index {
 			match++
 		}
