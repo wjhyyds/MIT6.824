@@ -1,15 +1,17 @@
 package kvraft
 
 import (
-	"6.5840/labgob"
-	"6.5840/labrpc"
-	"6.5840/raft"
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"6.5840/labgob"
+	"6.5840/labrpc"
+	"6.5840/raft"
 )
 
-const Debug = false
+const Debug = true
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
@@ -18,11 +20,15 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
+var ExecuteTimeout = 500 * time.Millisecond
 
 type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+	Type string // Put/Append/Get
+	Sid  uint64
+	Cid  int64
+
+	Key string
+	Val string
 }
 
 type KVServer struct {
@@ -35,19 +41,90 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	db     *MemoryDb        // 保存状态
+	notify map[int]chan Op  // log index / chan op
+	tokens map[int64]uint64 // cid/sid
 }
-
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	if kv.killed() {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	op := Op{
+		Type: "Get",
+		Sid:  args.Sid,
+		Cid:  args.Cid,
+		Key:  args.Key,
+	}
+	index, _, isLeader := kv.rf.Start(op)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	ch := kv.getNotifyCh(index)
+	defer func() {
+		kv.mu.Lock()
+		delete(kv.notify, index)
+		kv.mu.Unlock()
+	}()
+
+	select {
+	case <-ch:
+		kv.mu.Lock()
+		reply.Value, reply.Err = kv.db.Get(args.Key)
+		kv.mu.Unlock()
+	case <-time.After(ExecuteTimeout):
+		reply.Err = ErrTimeout
+	}
+
 }
 
-func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
+func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
-}
+	if kv.killed() {
+		reply.Err = ErrWrongLeader
+		return
+	}
 
-func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	// DPrintf("S%d %v <- C%d,args=%+v", kv.me, args.Op, args.Cid, args)
+
+	op := Op{
+		Type: args.Op,
+		Sid:  args.Sid,
+		Cid:  args.Cid,
+		Key:  args.Key,
+		Val:  args.Value,
+	}
+
+	if kv.isDuplicate(op) {
+		reply.Err = OK
+		return
+	}
+
+	index, _, isLeader := kv.rf.Start(op)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	ch := kv.getNotifyCh(index)
+	defer func() {
+		kv.mu.Lock()
+		delete(kv.notify, index)
+		close(ch)
+		kv.mu.Unlock()
+	}()
+
+	select {
+	case <-ch:
+		reply.Err = OK
+	case <-time.After(ExecuteTimeout):
+		reply.Err = ErrTimeout
+	}
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -96,6 +173,62 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.db = NewMemoryDb()
+	kv.notify = make(map[int]chan Op)
+	kv.tokens = make(map[int64]uint64)
+
+	go kv.applier()
 
 	return kv
+}
+
+func (kv *KVServer) getNotifyCh(index int) chan Op {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	ch, exist := kv.notify[index]
+	if !exist {
+		ch = make(chan Op)
+		kv.notify[index] = ch
+	}
+
+	return ch
+}
+
+func (kv *KVServer) isDuplicate(op Op) bool {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	if lastSid, exist := kv.tokens[op.Cid]; exist {
+		return op.Sid <= lastSid
+	}
+	return false
+}
+
+func (kv *KVServer) applier() {
+	for !kv.killed() {
+
+		msg := <-kv.applyCh
+		// DPrintf("S%d <- rf,msg=%+v", kv.me, msg)
+		if msg.CommandValid {
+			index, op := msg.CommandIndex, msg.Command.(Op)
+			if !kv.isDuplicate(op) {
+				kv.mu.Lock()
+				switch op.Type {
+				case "Put":
+					kv.db.Put(op.Key, op.Val)
+				case "Append":
+					kv.db.Append(op.Key, op.Val)
+				}
+				kv.tokens[op.Cid] = op.Sid
+				kv.mu.Unlock()
+			}
+			// DPrintf("S%d flag", kv.me)
+			// NOTE:只有Leader才需要notify,否则会导致阻塞
+			if _, isLeader := kv.rf.GetState(); isLeader {
+				kv.getNotifyCh(index) <- op
+			}
+		}
+		// DPrintf("S%d finish a apply loop", kv.me)
+	}
 }
