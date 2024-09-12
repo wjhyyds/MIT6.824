@@ -21,12 +21,12 @@ func (m *MemoryDb) Get(key string) (string, Err) {
 	return "", ErrNoKey
 }
 
-func (m *MemoryDb) Put(key, val string) Err {
+func (m *MemoryDb) Put(key, val string) (string, Err) {
 	m.kv[key] = val
-	return OK
+	return "", OK
 }
 
-func (m *MemoryDb) Append(key, arg string) Err {
+func (m *MemoryDb) Append(key, arg string) (string, Err) {
 	m.kv[key] += arg
-	return OK
+	return "", OK
 }

@@ -9,28 +9,44 @@ const (
 
 type Err string
 
-// Put or Append
-type PutAppendArgs struct {
+// // Put or Append
+// type PutAppendArgs struct {
+// 	Key   string
+// 	Value string
+
+// 	Op  string // Put/Append
+// 	Sid uint64
+// 	Cid int64
+// }
+
+// type PutAppendReply struct {
+// 	Err Err
+// }
+
+// type GetArgs struct {
+// 	Key string
+
+// 	Sid uint64
+// 	Cid int64
+// }
+
+// type GetReply struct {
+// 	Err   Err
+// 	Value string
+// }
+
+type Request struct {
+	Sid uint64
+	Cid int64
+	Op  string
+
 	Key   string
 	Value string
+}
 
-	Op  string // Put/Append
+type Reply struct {
 	Sid uint64
-	Cid int64
-}
 
-type PutAppendReply struct {
-	Err Err
-}
-
-type GetArgs struct {
-	Key string
-
-	Sid uint64
-	Cid int64
-}
-
-type GetReply struct {
 	Err   Err
 	Value string
 }

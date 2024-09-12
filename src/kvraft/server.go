@@ -11,7 +11,7 @@ import (
 	"6.5840/raft"
 )
 
-const Debug = true
+const Debug = false
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
@@ -41,68 +41,28 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	db     *MemoryDb        // 保存状态
-	notify map[int]chan Op  // log index / chan op
-	tokens map[int64]uint64 // cid/sid
+	db        *MemoryDb          // 保存状态
+	notify    map[int]chan Reply // log index / chan op
+	lastReply map[int64]Reply    // cid/reply
 }
 
-func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
-	if kv.killed() {
-		reply.Err = ErrWrongLeader
+func (kv *KVServer) Do(args *Request, reply *Reply) {
+
+	DPrintf("S%d <- C%d,args=%+v", kv.me, args.Cid, args)
+
+	if args.Op != "Get" && kv.isDuplicate(args.Cid, args.Sid) {
+		last := kv.lastReply[args.Cid]
+		reply.Value, reply.Err = last.Value, last.Err
 		return
 	}
-
-	op := Op{
-		Type: "Get",
-		Sid:  args.Sid,
-		Cid:  args.Cid,
-		Key:  args.Key,
-	}
-	index, _, isLeader := kv.rf.Start(op)
-	if !isLeader {
-		reply.Err = ErrWrongLeader
-		return
-	}
-
-	ch := kv.getNotifyCh(index)
-	defer func() {
-		kv.mu.Lock()
-		delete(kv.notify, index)
-		kv.mu.Unlock()
-	}()
-
-	select {
-	case <-ch:
-		kv.mu.Lock()
-		reply.Value, reply.Err = kv.db.Get(args.Key)
-		kv.mu.Unlock()
-	case <-time.After(ExecuteTimeout):
-		reply.Err = ErrTimeout
-	}
-
-}
-
-func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
-	if kv.killed() {
-		reply.Err = ErrWrongLeader
-		return
-	}
-
-	// DPrintf("S%d %v <- C%d,args=%+v", kv.me, args.Op, args.Cid, args)
 
 	op := Op{
 		Type: args.Op,
-		Sid:  args.Sid,
 		Cid:  args.Cid,
-		Key:  args.Key,
-		Val:  args.Value,
-	}
+		Sid:  args.Sid,
 
-	if kv.isDuplicate(op) {
-		reply.Err = OK
-		return
+		Key: args.Key,
+		Val: args.Value,
 	}
 
 	index, _, isLeader := kv.rf.Start(op)
@@ -112,18 +72,48 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 
 	ch := kv.getNotifyCh(index)
-	defer func() {
-		kv.mu.Lock()
-		delete(kv.notify, index)
-		close(ch)
-		kv.mu.Unlock()
-	}()
 
 	select {
-	case <-ch:
-		reply.Err = OK
+	case res := <-ch:
+		reply.Value, reply.Err = res.Value, res.Err
 	case <-time.After(ExecuteTimeout):
 		reply.Err = ErrTimeout
+	}
+
+	go kv.removeOutdatedCh(index)
+}
+
+func (kv *KVServer) applier() {
+	for !kv.killed() {
+		msg := <-kv.applyCh
+		if msg.CommandValid {
+			var reply Reply
+			index, op := msg.CommandIndex, msg.Command.(Op)
+			reply.Sid = op.Sid
+
+			if op.Type != "Get" && kv.isDuplicate(op.Cid, op.Sid) {
+				reply = kv.lastReply[op.Cid]
+			} else {
+				kv.mu.Lock()
+				switch op.Type {
+				case "Get":
+					reply.Value, reply.Err = kv.db.Get(op.Key)
+				case "Put":
+					reply.Value, reply.Err = kv.db.Put(op.Key, op.Val)
+					kv.lastReply[op.Cid] = reply
+				case "Append":
+					reply.Value, reply.Err = kv.db.Append(op.Key, op.Val)
+					kv.lastReply[op.Cid] = reply
+				default:
+					panic("Unexpected op type!")
+				}
+				kv.mu.Unlock()
+			}
+
+			if term, isLeader := kv.rf.GetState(); isLeader && term == msg.CommandTerm {
+				kv.getNotifyCh(index) <- reply
+			}
+		}
 	}
 }
 
@@ -174,61 +164,35 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	// You may need initialization code here.
 	kv.db = NewMemoryDb()
-	kv.notify = make(map[int]chan Op)
-	kv.tokens = make(map[int64]uint64)
+	kv.notify = make(map[int]chan Reply)
+	kv.lastReply = make(map[int64]Reply)
 
 	go kv.applier()
 
 	return kv
 }
 
-func (kv *KVServer) getNotifyCh(index int) chan Op {
+func (kv *KVServer) removeOutdatedCh(index int) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-
-	ch, exist := kv.notify[index]
-	if !exist {
-		ch = make(chan Op)
-		kv.notify[index] = ch
+	if ch, exist := kv.notify[index]; exist {
+		close(ch)
+		delete(kv.notify, index)
 	}
-
-	return ch
 }
 
-func (kv *KVServer) isDuplicate(op Op) bool {
+func (kv *KVServer) getNotifyCh(index int) chan Reply {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-
-	if lastSid, exist := kv.tokens[op.Cid]; exist {
-		return op.Sid <= lastSid
+	if _, exist := kv.notify[index]; !exist {
+		kv.notify[index] = make(chan Reply)
 	}
-	return false
+	return kv.notify[index]
 }
 
-func (kv *KVServer) applier() {
-	for !kv.killed() {
-
-		msg := <-kv.applyCh
-		// DPrintf("S%d <- rf,msg=%+v", kv.me, msg)
-		if msg.CommandValid {
-			index, op := msg.CommandIndex, msg.Command.(Op)
-			if !kv.isDuplicate(op) {
-				kv.mu.Lock()
-				switch op.Type {
-				case "Put":
-					kv.db.Put(op.Key, op.Val)
-				case "Append":
-					kv.db.Append(op.Key, op.Val)
-				}
-				kv.tokens[op.Cid] = op.Sid
-				kv.mu.Unlock()
-			}
-			// DPrintf("S%d flag", kv.me)
-			// NOTE:只有Leader才需要notify,否则会导致阻塞
-			if _, isLeader := kv.rf.GetState(); isLeader {
-				kv.getNotifyCh(index) <- op
-			}
-		}
-		// DPrintf("S%d finish a apply loop", kv.me)
-	}
+func (kv *KVServer) isDuplicate(cid int64, sid uint64) bool {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	last, exist := kv.lastReply[cid]
+	return exist && sid <= last.Sid
 }
