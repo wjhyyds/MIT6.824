@@ -4,6 +4,7 @@ type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
 	CommandIndex int
+	CommandTerm  int
 
 	SnapshotValid bool
 	Snapshot      []byte
@@ -36,6 +37,7 @@ func (rf *Raft) committer() {
 					CommandValid: true,
 					Command:      e.Cmd,
 					CommandIndex: e.Index,
+					CommandTerm:  e.Term,
 				}
 			}
 			rf.mu.Lock()
