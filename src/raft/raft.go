@@ -81,8 +81,16 @@ func (rf *Raft) readPersist(data []byte) {
 
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
-	if d.Decode(&rf.term) != nil || d.Decode(&rf.votedFor) != nil || d.Decode(&rf.log.entries) != nil || d.Decode(&rf.log.snapshot.Index) != nil || d.Decode(&rf.log.snapshot.Term) != nil {
+	var term, votedFor, snapshotIndex, snapshotTerm int
+	var entries []Entry
+	if d.Decode(&term) != nil || d.Decode(&votedFor) != nil || d.Decode(&entries) != nil || d.Decode(&snapshotIndex) != nil || d.Decode(&snapshotTerm) != nil {
 		panic("Decode failed")
+	} else {
+		rf.term = term
+		rf.votedFor = votedFor
+		rf.log.entries = entries
+		rf.log.snapshot.Index = snapshotIndex
+		rf.log.snapshot.Term = snapshotTerm
 	}
 
 	rf.log.compactedTo(Snapshot{Data: rf.persister.ReadSnapshot(), Index: rf.log.snapshot.Index, Term: rf.log.snapshot.Term})
