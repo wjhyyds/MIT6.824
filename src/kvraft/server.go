@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"bytes"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -41,9 +42,10 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	db        *MemoryDb          // 保存状态
-	notify    map[int]chan Reply // log index / chan op
-	lastReply map[int64]Reply    // cid/reply
+	db          *MemoryDb          // 保存状态
+	notify      map[int]chan Reply // log index / chan op
+	lastReply   map[int64]Reply    // cid/reply
+	lastApplied int                // 防止apply快照时db回滚
 }
 
 func (kv *KVServer) Do(args *Request, reply *Reply) {
@@ -87,6 +89,15 @@ func (kv *KVServer) applier() {
 	for !kv.killed() {
 		msg := <-kv.applyCh
 		if msg.CommandValid {
+			// 过时的日志
+			kv.mu.Lock()
+			if msg.CommandIndex <= kv.lastApplied {
+				kv.mu.Unlock()
+				continue
+			}
+			kv.lastApplied = msg.CommandIndex
+			kv.mu.Unlock()
+
 			var reply Reply
 			index, op := msg.CommandIndex, msg.Command.(Op)
 			reply.Sid = op.Sid
@@ -113,18 +124,24 @@ func (kv *KVServer) applier() {
 			if term, isLeader := kv.rf.GetState(); isLeader && term == msg.CommandTerm {
 				kv.getNotifyCh(index) <- reply
 			}
+
+			// snapshot
+			if kv.maxraftstate != -1 && kv.rf.RaftStateSize() > kv.maxraftstate {
+				DPrintf("trigger snapshot,lastApplied=%v,raftsize=%d", kv.lastApplied, kv.rf.RaftStateSize())
+				snapshot := kv.encode()
+				kv.rf.Snapshot(kv.lastApplied, snapshot)
+			}
+		}
+
+		if msg.SnapshotValid {
+			kv.mu.Lock()
+			kv.decode(msg.Snapshot)
+			kv.lastApplied = msg.SnapshotIndex
+			kv.mu.Unlock()
 		}
 	}
 }
 
-// the tester calls Kill() when a KVServer instance won't
-// be needed again. for your convenience, we supply
-// code to set rf.dead (without needing a lock),
-// and a killed() method to test rf.dead in
-// long-running loops. you can also add your own
-// code to Kill(). you're not required to do anything
-// about this, but it may be convenient (for example)
-// to suppress debug output from a Kill()ed instance.
 func (kv *KVServer) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
@@ -166,6 +183,10 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.db = NewMemoryDb()
 	kv.notify = make(map[int]chan Reply)
 	kv.lastReply = make(map[int64]Reply)
+	kv.lastApplied = -1
+
+	snapshot := persister.ReadSnapshot()
+	kv.decode(snapshot)
 
 	go kv.applier()
 
@@ -195,4 +216,34 @@ func (kv *KVServer) isDuplicate(cid int64, sid uint64) bool {
 	defer kv.mu.Unlock()
 	last, exist := kv.lastReply[cid]
 	return exist && sid <= last.Sid
+}
+
+func (kv *KVServer) encode() []byte {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.lastReply)
+	e.Encode(kv.db.kv)
+	return w.Bytes()
+}
+
+func (kv *KVServer) decode(snapshot []byte) {
+	if snapshot == nil || len(snapshot) < 1 {
+		return
+	}
+
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+
+	var lastReply map[int64]Reply
+	var db map[string]string
+
+	if err1, err2 := d.Decode(&lastReply), d.Decode(&db); err1 != nil || err2 != nil {
+		log.Fatalf("fail to decode,err1=%+v,err2=%+v", err1, err2)
+	} else {
+		kv.db.kv = db
+		kv.lastReply = lastReply
+	}
 }
