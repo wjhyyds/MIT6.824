@@ -189,3 +189,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	return rf
 }
+
+func (rf *Raft) RaftStateSize() int {
+	return rf.persister.RaftStateSize()
+}
