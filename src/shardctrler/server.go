@@ -1,11 +1,16 @@
 package shardctrler
 
+import (
+	"sync"
+	"sync/atomic"
+	"time"
 
-import "6.5840/raft"
-import "6.5840/labrpc"
-import "sync"
-import "6.5840/labgob"
+	"6.5840/labgob"
+	"6.5840/labrpc"
+	"6.5840/raft"
+)
 
+var ExecuteTimeout = 500 * time.Millisecond
 
 type ShardCtrler struct {
 	mu      sync.Mutex
@@ -15,39 +20,41 @@ type ShardCtrler struct {
 
 	// Your data here.
 
-	configs []Config // indexed by config num
-}
+	stateMachine *MemoryConfigStateMachine
+	lastReply    map[int64]Reply    // cid/reply
+	notify       map[int]chan Reply // log index / chan op
 
+	dead int32
+}
 
 type Op struct {
 	// Your data here.
+	OpType OpType
+	Cid    int64
+	Seq    int64
+
+	// for Join,new GID -> servers mappings
+	Servers map[int][]string
+
+	// for Leave
+	GIDs []int
+
+	// for Move
+	Shard int
+	GID   int
+
+	// for Query,desired config number
+	Num int
 }
 
-
-func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
-	// Your code here.
-}
-
-func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
-	// Your code here.
-}
-
-func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
-	// Your code here.
-}
-
-func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
-	// Your code here.
-}
-
-
-// the tester calls Kill() when a ShardCtrler instance won't
-// be needed again. you are not required to do anything
-// in Kill(), but it might be convenient to (for example)
-// turn off debug output from this instance.
 func (sc *ShardCtrler) Kill() {
-	sc.rf.Kill()
 	// Your code here, if desired.
+	atomic.StoreInt32(&sc.dead, 1)
+	sc.rf.Kill()
+}
+
+func (sc *ShardCtrler) Killed() bool {
+	return atomic.LoadInt32(&sc.dead) == 1
 }
 
 // needed by shardkv tester
@@ -63,14 +70,115 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc := new(ShardCtrler)
 	sc.me = me
 
-	sc.configs = make([]Config, 1)
-	sc.configs[0].Groups = map[int][]string{}
+	sc.stateMachine = newMemoryConfigStateMachine()
 
 	labgob.Register(Op{})
 	sc.applyCh = make(chan raft.ApplyMsg)
 	sc.rf = raft.Make(servers, me, persister, sc.applyCh)
 
 	// Your code here.
+	sc.lastReply = map[int64]Reply{}
+	sc.notify = map[int]chan Reply{}
+
+	go sc.applier()
 
 	return sc
+}
+
+func (sc *ShardCtrler) Do(args *Request, reply *Reply) {
+	if args.Op != OpQuery && sc.isDuplicate(args.Cid, args.Seq) {
+		last := sc.lastReply[args.Cid]
+		reply.Seq, reply.Config, reply.Err = last.Seq, last.Config, last.Err
+		return
+	}
+
+	op := Op{
+		OpType: args.Op,
+		Cid:    args.Cid,
+		Seq:    args.Seq,
+
+		Servers: args.Servers,
+		GIDs:    args.GIDs,
+		Shard:   args.Shard,
+		GID:     args.GID,
+		Num:     args.Num,
+	}
+
+	index, _, isLeader := sc.rf.Start(op)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	ch := sc.getNotifyCh(index)
+
+	select {
+	case res := <-ch:
+		reply.Seq, reply.Config, reply.Err = res.Seq, res.Config, res.Err
+	case <-time.After(ExecuteTimeout):
+		reply.Err = ErrTimeout
+	}
+
+	go sc.removeOutdatedCh(index)
+}
+
+func (sc *ShardCtrler) applier() {
+	for !sc.Killed() {
+		msg := <-sc.applyCh
+		if msg.CommandValid {
+			var reply Reply
+			index, op := msg.CommandIndex, msg.Command.(Op)
+			reply.Seq = op.Seq
+
+			if op.OpType != OpQuery && sc.isDuplicate(op.Cid, op.Seq) {
+				last := sc.lastReply[op.Cid]
+				reply.Config, reply.Err = last.Config, last.Err
+			} else {
+				sc.mu.Lock()
+				switch op.OpType {
+				case OpJoin:
+					reply.Err = sc.stateMachine.Join(op.Servers)
+				case OpLeave:
+					reply.Err = sc.stateMachine.Leave(op.GIDs)
+				case OpMove:
+					reply.Err = sc.stateMachine.Move(op.Shard, op.GID)
+				case OpQuery:
+					reply.Err, reply.Config = sc.stateMachine.Query(op.Num)
+				default:
+					panic("Unexpected op type")
+				}
+				sc.mu.Unlock()
+			}
+
+			if term, isLeader := sc.rf.GetState(); isLeader && term == msg.CommandTerm {
+				sc.getNotifyCh(index) <- reply
+			}
+		}
+	}
+}
+
+func (sc *ShardCtrler) isDuplicate(cid int64, seq int64) bool {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	lastRep, ok := sc.lastReply[cid]
+	return ok && seq <= lastRep.Seq
+}
+
+func (sc *ShardCtrler) getNotifyCh(index int) chan Reply {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if _, exist := sc.notify[index]; !exist {
+		sc.notify[index] = make(chan Reply)
+	}
+	return sc.notify[index]
+}
+
+func (sc *ShardCtrler) removeOutdatedCh(index int) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	if ch, exist := sc.notify[index]; exist {
+		close(ch)
+		delete(sc.notify, index)
+	}
 }

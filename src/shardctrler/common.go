@@ -29,11 +29,51 @@ type Config struct {
 }
 
 const (
-	OK = "OK"
+	OK             = "OK"
+	ErrWrongLeader = "ErrWrongLeader"
+	ErrTimeout     = "ErrTimeout"
 )
 
 type Err string
 
+type OpType string
+
+const (
+	OpJoin  OpType = "Join"
+	OpLeave OpType = "Leave"
+	OpMove  OpType = "Move"
+	OpQuery OpType = "Query"
+)
+
+type Request struct {
+	Op OpType
+
+	// for duplicate client request detection
+	Cid int64
+	Seq int64
+
+	// for Join,new GID -> servers mappings
+	Servers map[int][]string
+
+	// for Leave
+	GIDs []int
+
+	// for Move
+	Shard int
+	GID   int
+
+	// for Query,desired config number
+	Num int
+}
+
+type Reply struct {
+	Seq int64
+
+	Err    Err
+	Config Config
+}
+
+// =============================    Unused    ====================
 type JoinArgs struct {
 	Servers map[int][]string // new GID -> servers mappings
 }
