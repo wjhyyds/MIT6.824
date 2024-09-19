@@ -1,7 +1,5 @@
 package shardctrler
 
-import "log"
-
 type stateMachine interface {
 	Join(Servers map[int][]string) Err
 	Leave(GIDs []int) Err
@@ -94,7 +92,7 @@ func (sm *MemoryConfigStateMachine) Move(Shard int, Gid int) Err {
 
 func (sm *MemoryConfigStateMachine) Query(Num int) (Err, Config) {
 	if Num < 0 || Num >= len(sm.configs) {
-		log.Fatalf("Query index out of range,index=%d,len(configs)=%d", Num, len(sm.configs))
+		// log.Fatalf("Query index out of range,index=%d,len(configs)=%d", Num, len(sm.configs))
 		return OK, sm.configs[len(sm.configs)-1]
 	}
 	return OK, sm.configs[Num]
