@@ -90,10 +90,10 @@ func (sm *MemoryConfigStateMachine) Move(Shard int, Gid int) Err {
 	return OK
 }
 
-func (sm *MemoryConfigStateMachine) Query(Num int) (Err, Config) {
+func (sm *MemoryConfigStateMachine) Query(Num int) (Config, Err) {
 	if Num < 0 || Num >= len(sm.configs) {
 		// log.Fatalf("Query index out of range,index=%d,len(configs)=%d", Num, len(sm.configs))
-		return OK, sm.configs[len(sm.configs)-1]
+		return sm.configs[len(sm.configs)-1], OK
 	}
-	return OK, sm.configs[Num]
+	return sm.configs[Num],OK
 }

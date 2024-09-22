@@ -135,18 +135,23 @@ func (sc *ShardCtrler) applier() {
 				reply.Config, reply.Err = last.Config, last.Err
 			} else {
 				sc.mu.Lock()
+				var (
+					config Config
+					err    Err
+				)
 				switch op.OpType {
 				case OpJoin:
-					reply.Err = sc.stateMachine.Join(op.Servers)
+					err = sc.stateMachine.Join(op.Servers)
 				case OpLeave:
-					reply.Err = sc.stateMachine.Leave(op.GIDs)
+					err = sc.stateMachine.Leave(op.GIDs)
 				case OpMove:
-					reply.Err = sc.stateMachine.Move(op.Shard, op.GID)
+					err = sc.stateMachine.Move(op.Shard, op.GID)
 				case OpQuery:
-					reply.Err, reply.Config = sc.stateMachine.Query(op.Num)
+					config, err = sc.stateMachine.Query(op.Num)
 				default:
 					panic("Unexpected op type")
 				}
+				reply.Config, reply.Err = config, err
 				sc.mu.Unlock()
 			}
 
