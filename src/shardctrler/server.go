@@ -152,6 +152,9 @@ func (sc *ShardCtrler) applier() {
 					panic("Unexpected op type")
 				}
 				reply.Config, reply.Err = config, err
+				if op.OpType != OpQuery {
+					sc.lastReply[op.Cid] = reply
+				}
 				sc.mu.Unlock()
 			}
 
