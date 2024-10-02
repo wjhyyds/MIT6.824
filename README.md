@@ -14,5 +14,12 @@
 ![lab3-1](docs/Lab3-1.png)
 ![lab3-2](docs/Lab3-2.png)
 
-- [ ] Lab 4:Fault-tolerant Key/Value Service
-- [ ] Lab 5:Sharded Key/Value Service
+- [x] Lab 4:Fault-tolerant Key/Value Service
+
+![lab4](docs/Lab4.png)
+
+- [x] Lab 5:Sharded Key/Value Service
+
+![lab5A](docs/Lab5A.png)
+
+![lab5B](docs/Lab5B.png)
