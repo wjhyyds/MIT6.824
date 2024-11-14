@@ -8,20 +8,38 @@ package mr
 
 import "os"
 import "strconv"
+import "time"
 
 //
 // example to show how to declare the arguments
 // and reply for an RPC.
 //
+type TaskState int
 
-type ExampleArgs struct {
-	X int
+const (
+	Waiting TaskState = iota
+	Mapping
+	Reducing
+	Done 
+	Exit 
+)
+
+type TaskArgs struct{}
+
+type Task struct {
+	Id 			int 
+	Files 		[]string
+	ReduceNum	int
+	State 		TaskState
+	Begin		time.Time
 }
 
-type ExampleReply struct {
-	Y int
-}
-
+type Phase int 
+const (
+	MapPhase Phase = iota
+	ReducePhase
+	AllDone
+)
 // Add your RPC definitions here.
 
 
