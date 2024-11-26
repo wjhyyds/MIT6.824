@@ -40,6 +40,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.ChangeState(Follower)
 		rf.currentTerm , rf.votedFor = args.Term , -1
 	}
+	// RF代表的就是普通节点，args表示发起相应请求的节点
+	if !rf.isLogUpToDate(args.LastLogIndex , args.LastLogTerm) {
+		reply.Term , reply.VoteGranted = rf.currentTerm , false
+		return
+	}
+
 	rf.votedFor = args.CandidateId
 	rf.electionTimer.Reset(RandomElectionTimeout())
 	reply.Term , reply.VoteGranted = rf.currentTerm , true
@@ -64,12 +70,22 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term 			int
 	Success 		bool
+	ConflictIndex	int
+	ConflictTerm	int
 }
 
-func (rf *Raft) genAppendEntriesArgs() *AppendEntriesArgs {
+func (rf *Raft) genAppendEntriesArgs(prevLogIndex int) *AppendEntriesArgs {
+	firstLogIndex := rf.getFirstLog().Index
+	// 从某一段复制过来强行同步
+	entries := make([]LogEntry, len(rf.logs[prevLogIndex-firstLogIndex+1:]))
+	copy(entries, rf.logs[prevLogIndex-firstLogIndex+1:])
 	args := &AppendEntriesArgs{
-		Term: 		rf.currentTerm,
-		LeaderId:	rf.me,
+		Term: 			rf.currentTerm,
+		LeaderId:		rf.me,
+		PrevLogIndex: 	prevLogIndex,//??
+		PrevLogTerm: 	rf.logs[prevLogIndex-firstLogIndex].Term,//??
+		LeaderCommit: 	rf.commitIndex,
+		Entries: 		entries,//??
 	}	
 	return args
 }
@@ -90,6 +106,52 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs , reply *AppendEntriesRepl
 	}
 	rf.ChangeState(Follower)
 	rf.electionTimer.Reset(RandomElectionTimeout())
+
+	// 如果当前节点上一条日志小于当前服务器的第一条日志索引，说明当前节点落后一点
+	// 直接当响应的Term设置为当前服务器任期
+	if args.PrevLogIndex < rf.getFirstLog().Index {
+		reply.Term, reply.Success = rf.currentTerm, false
+		return
+	}
+	// 发送args方日志落后于当前节点
+	// 这段代码下的冲突在怎么处理呢
+	if !rf.isLogMatched(args.PrevLogIndex, args.PrevLogTerm) {
+		reply.Term, reply.Success = rf.currentTerm, false
+		lastLogIndex := rf.getLastLog().Index
+		//raft节点的log小于leader节点复制过来的log
+		if lastLogIndex < args.PrevLogIndex {
+			reply.ConflictIndex,reply.ConflictTerm = lastLogIndex + 1 ,-1
+		}else {
+			// 从raft日志中从后往前找第一个冲突的任期,
+			firstLogIndex := rf.getFirstLog().Index
+			index := args.PrevLogIndex
+			// 这里的args.Term不是不会变吗？
+			// 其实就是在这里找是哪个Term冲突了
+			for index >= firstLogIndex && rf.logs[index-firstLogIndex].Term == args.PrevLogTerm {
+				index --
+			}
+		reply.ConflictIndex, reply.ConflictTerm = index + 1, args.PrevLogTerm
+		}
+		return
+	}
+	firstLogIndex := rf.getFirstLog().Index
+	// raft节点更新本地条目与leader保持一致
+	for index, entry := range args.Entries {
+		// 如果当前的index起点已经大于等于raft节点中所有logs的长度，就直接冲这里开始复制
+		// 或者从某个日志开始Term不匹配也就找到了复制的位置
+		if entry.Index - firstLogIndex >= len(rf.logs) || rf.logs[entry.Index-firstLogIndex].Term != entry.Term {
+			rf.logs = append(rf.logs[:entry.Index - firstLogIndex], args.Entries[index:]...)
+			break
+		}
+	}
+	// 确定从哪里开始复制后，就开始执行复制和Commit
+	newCommitIndex := Min(args.LeaderCommit, rf.getLastLog().Index)
+	if newCommitIndex > rf.commitIndex {
+		DPrintf("{Node %v} advanced commitIndex from %v to %v with leaderCommit %v in term %v",rf.me,rf.commitIndex,newCommitIndex,args.LeaderCommit,rf.currentTerm)
+		rf.commitIndex = newCommitIndex
+		rf.applyCond.Signal()//通知相应groutinue可以同步日志了 !!!!!
+	}
+
 	reply.Term , reply.Success = rf.currentTerm ,true
 }
 
