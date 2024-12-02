@@ -1,72 +1,57 @@
-# MIT 6.5840(6.824)
+raft是一种复制状态机协议，用于构建一个自带容错错KV存储系统
+1.实现raft:作为一个模块供后续功能使用；Raft实例之间通过RPC通信，维持复制日志的一致性；支持无限数量的日志条目
+1.日志选举（Leader Election）
 
-Labs of MIT 6.5840(6.824): Distributed Systems.
+2.设计Raft结构体
 
-## Lab 1 MapReduce
+设计Raft结构体
+type Raft struct {
+    mu        sync.RWMutex        // Lock to protect shared access to this peer's state, to use RWLock for better performance
+    peers     []*labrpc.ClientEnd // RPC end points of all peers
+    persister *Persister          // Object to hold this peer's persisted state
+    me        int                 // this peer's index into peers[]
+    dead      int32               // set by Kill()
 
-[Experimental Requirements](http://nil.csail.mit.edu/6.5840/2024/labs/lab-mr.html)
+    // Persistent state on all servers(Updated on stable storage before responding to RPCs)
+    currentTerm int        // latest term server has seen(initialized to 0 on first boot, increases monotonically)
+    votedFor    int        // candidateId that received vote in current term(or null if none)
+    logs        []LogEntry // log entries; each entry contains command for state machine, and term when entry was received by leader(first index is 1)
 
-- [x] Complete the basic requirements for MapReduce
-- [x] Handling worker failures
-- [x] No data competition, a big lock ensures safety
-- [x] Pass lab test
-- [ ] Communicate over TCP/IP and read/write files using a shared file system
+    // Volatile state on all servers
+    commitIndex int // index of highest log entry known to be committed(initialized to 0, increases monotonically)
+    lastApplied int // index of highest log entry applied to state machine(initialized to 0, increases monotonically)
 
-[Tutorial](https://blog.csdn.net/hzf0701/article/details/138867824?spm=1001.2014.3001.5501)
+    // Volatile state on leaders(Reinitialized after election)
+    nextIndex  []int // for each server, index of the next log entry to send to that server(initialized to leader last log index + 1)
+    matchIndex []int // for each server, index of highest log entry known to be replicated on server(initialized to 0, increases monotonically)
 
-```shell
-❯ bash test-mr.sh
-*** Starting wc test
---- wc test: PASS
-*** Starting indexer test.
---- indexer test: PASS
-*** Starting map parallelism test.
---- map parallelism test: PASS
-*** Starting reduce parallelism test.
---- reduce parallelism test: PASS
-*** Starting job count test.
---- job count test: PASS
-*** Starting early exit test.
---- early exit test: PASS
-*** Starting crash test.
---- crash test: PASS
-*** PASSED ALL TESTS
-```
+    // other properties
+    state          NodeState     // current state of the server
+    electionTimer  *time.Timer   // timer for election timeout
+    heartbeatTimer *time.Timer   // timer for heartbeat
+    applyCh        chan ApplyMsg // channel to send apply message to service
+}
 
-## Lab 2 Key/Value Server
+3通用函数
+3.1获取当前纳秒级时间戳
+var GlobalRand = &LockedRand{
+    rand: rand.New(rand.NewSource(time.Now().UnixNano())),
+}
+随机选举、心跳超时时间间隔。超时处理为什么要引入随机数呢？
+func RandomElectionTimeout() time.Duration {return time.Duration(ElectionTimeout+GlobalRand.Intn(ElectionTimeout)) * time.Millisecond}
 
-[Experimental Requirements](https://pdos.csail.mit.edu/6.824/labs/lab-kvsrv.html)
-
-- [x] Complete the basic requirements for Key/Value Server
-- [x] No data competition, a big lock ensures safety
-- [x] Pass lab test
-
-[Tutorial](https://blog.csdn.net/hzf0701/article/details/138904641)
-
-```shell
-❯ go test
-Test: one client
-  ... Passed -- t  3.3 nrpc 20037 ops 13359
-Test: many clients ...
-  ... Passed -- t  3.7 nrpc 85009 ops 56718
-Test: unreliable net, many clients ...
-  ... Passed -- t  3.3 nrpc  1161 ops  632
-Test: concurrent append to same key, unreliable ...
-  ... Passed -- t  0.4 nrpc   131 ops   52
-Test: memory use get ...
-  ... Passed -- t  0.6 nrpc     8 ops    0
-Test: memory use put ...
-  ... Passed -- t  0.3 nrpc     4 ops    0
-Test: memory use append ...
-  ... Passed -- t  0.5 nrpc     4 ops    0
-Test: memory use many put clients ...
-  ... Passed -- t 36.7 nrpc 200000 ops    0
-Test: memory use many get client ...
-  ... Passed -- t 22.6 nrpc 100002 ops    0
-Test: memory use many appends ...
-2024/05/15 12:48:26 m0 411000 m1 1550088
-  ... Passed -- t  2.6 nrpc  2000 ops    0
-PASS
-ok      6.5840/kvsrv    75.329s
-```
-
+func StableHeartbeatTimeout() time.Duration {return time.Duration(HeartbeatTimeout) * time.Millisecond}
+4
+4.1Raft一致性
+case Follower:
+//重置一个新的随机选举时间，引入随机防止多个节点同时发起选举
+//Leader超时会变成candidate,然后随机发起选举
+        rf.electionTimer.Reset(RandomElectionTimeout())
+//Leader节点定期发送心跳给Follower节点
+        rf.heartbeatTimer.Stop()
+case Leader:
+//同理leader停止选举
+        rf.electionTimer.Stop() // stop election
+//leader定期发送心跳给Follow保持联系，维持领导避免不必要的选举
+        rf.heartbeatTimer.Reset(StableHeartbeatTimeout())
+    }
