@@ -18,13 +18,13 @@ package raft
 //
 
 import (
-	//	"bytes"
+	"bytes"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	//	"6.5840/labgob"
+	"6.5840/labgob"
 	"6.5840/labrpc"
 )
 
@@ -111,16 +111,20 @@ func (rf *Raft) GetState() (int, bool) {
 // second argument to persister.Save().
 // after you've implemented snapshots, pass the current snapshot
 // (or nil if there's not yet a snapshot).
+
+// 就是个序列化数据的
+func (rf *Raft) encodeState() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.logs)
+	//fig2中强调要持久化的三个数据
+	return w.Bytes()
+}
+
 func (rf *Raft) persist() {
-	
-	// Your code here (3C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
+	rf.persister.SaveStateAndSnapshot(rf.encodeState(), nil)
 }
 
 
@@ -129,19 +133,17 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Your code here (3C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var currentTerm, votedFor int
+	var logs []LogEntry
+		// 只要有一个东西从字节流中解码出来nil就打印报错信息
+	if d.Decode(&currentTerm) != nil || d.Decode(&votedFor) != nil || d.Decode(&logs) != nil {
+		DPrintf("{Node %v} fails to decode persisted state", rf.me)
+	}
+	// 从持久化的数据里面读取三个数据，快速同步
+	rf.currentTerm, rf.votedFor, rf.logs = currentTerm, votedFor, logs
+	rf.lastApplied, rf.commitIndex = rf.getFirstLog().Index, rf.getFirstLog().Index
 }
 
 
@@ -179,6 +181,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Command: 	command,
 		Index: 		newLogIndex,
 	})
+	rf.persist()
 	// 每个节点先初始化自己的第一个并且默认统一
 	rf.matchIndex[rf.me], rf.nextIndex[rf.me] = newLogIndex, newLogIndex + 1
 	DPrintf("{Node %v} starts agreement on a new log entry with command %v in term %v", rf.me, command, rf.currentTerm)
@@ -208,6 +211,7 @@ func (rf *Raft) killed() bool {
 
 func (rf *Raft) StartElection() {
 	rf.votedFor = rf.me
+	rf.persist()
 	args := rf.genRequestVoteArgs()
 	grantedVotes := 1
 	DPrintf("{Node %v} starts election with RequestVoteArgs %v", rf.me, args)
@@ -234,6 +238,7 @@ func (rf *Raft) StartElection() {
 					}else if reply.Term > rf.currentTerm {
 						rf.ChangeState(Follower)
 						rf.currentTerm, rf.votedFor = reply.Term , -1
+						rf.persist()
 					}
 				}
 			}
@@ -307,6 +312,7 @@ func(rf *Raft) replicateOnceRound(peer int) {
 				if reply.Term > rf.currentTerm {
 					rf.ChangeState(Follower)
 					rf.currentTerm, rf.votedFor = reply.Term , -1
+					rf.persist()
 				// 确保当前是Leader任期内
 				}else if reply.Term == rf.currentTerm {
 					// 直接让下一个需要同步的任期为冲突index
@@ -364,6 +370,7 @@ func (rf *Raft) ticker() {
 			rf.mu.Lock()
 			rf.ChangeState(Candidate)
 			rf.currentTerm += 1
+			rf.persist()
 			rf.StartElection()
 			rf.electionTimer.Reset(RandomElectionTimeout())
 			rf.mu.Unlock()
