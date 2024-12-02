@@ -39,6 +39,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term > rf.currentTerm {
 		rf.ChangeState(Follower)
 		rf.currentTerm , rf.votedFor = args.Term , -1
+		rf.persist()
 	}
 	// RF代表的就是普通节点，args表示发起相应请求的节点
 	if !rf.isLogUpToDate(args.LastLogIndex , args.LastLogTerm) {
@@ -47,6 +48,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	rf.votedFor = args.CandidateId
+	rf.persist()
 	rf.electionTimer.Reset(RandomElectionTimeout())
 	reply.Term , reply.VoteGranted = rf.currentTerm , true
 }
@@ -103,6 +105,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs , reply *AppendEntriesRepl
 	// 当前节点是leader节点
 	if args.Term > rf.currentTerm {
 		rf.currentTerm, rf.votedFor = args.Term, -1
+		rf.persist()
 	}
 	rf.ChangeState(Follower)
 	rf.electionTimer.Reset(RandomElectionTimeout())
@@ -141,6 +144,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs , reply *AppendEntriesRepl
 		// 或者从某个日志开始Term不匹配也就找到了复制的位置
 		if entry.Index - firstLogIndex >= len(rf.logs) || rf.logs[entry.Index-firstLogIndex].Term != entry.Term {
 			rf.logs = append(rf.logs[:entry.Index - firstLogIndex], args.Entries[index:]...)
+			rf.persist()
 			break
 		}
 	}

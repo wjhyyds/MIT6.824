@@ -128,12 +128,12 @@ func (cfg *config) crash1(i int) {
 		cfg.mu.Lock()
 		cfg.rafts[i] = nil
 	}
-
+	//检查是否已经与持久化状态
 	if cfg.saved[i] != nil {
 		raftlog := cfg.saved[i].ReadRaftState()
 		snapshot := cfg.saved[i].ReadSnapshot()
 		cfg.saved[i] = &Persister{}
-		cfg.saved[i].Save(raftlog, snapshot)
+		cfg.saved[i].SaveStateAndSnapshot(raftlog, snapshot)
 	}
 }
 
