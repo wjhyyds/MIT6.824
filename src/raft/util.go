@@ -120,3 +120,14 @@ func Max(a , b int) int {
 	}
 	return b
 }
+//
+func shrinkEntries(entries []LogEntry) []LogEntry {
+	const lenMultiple = 2
+	//当前容量已经超过len的两倍了
+	if cap(entries) > len(entries)*lenMultiple {
+		newEntries := make([]LogEntry, len(entries))
+		copy(newEntries, entries)
+		return newEntries
+	}
+	return entries
+}

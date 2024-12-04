@@ -1,5 +1,7 @@
 package raft
 
+// import "golang.org/x/tools/go/analysis/passes/defers"
+
 type RequestVoteArgs struct {
 	// Your data here (3A, 3B).
 	Term         int
@@ -39,6 +41,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term > rf.currentTerm {
 		rf.ChangeState(Follower)
 		rf.currentTerm , rf.votedFor = args.Term , -1
+		rf.persist()
 	}
 	// RF代表的就是普通节点，args表示发起相应请求的节点
 	if !rf.isLogUpToDate(args.LastLogIndex , args.LastLogTerm) {
@@ -47,6 +50,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	rf.votedFor = args.CandidateId
+	rf.persist()
 	rf.electionTimer.Reset(RandomElectionTimeout())
 	reply.Term , reply.VoteGranted = rf.currentTerm , true
 }
@@ -95,19 +99,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs , reply *AppendEntriesRepl
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	defer DPrintf("{Node %v}'s state is {state %v, term %v}} after processing AppendEntries,  AppendEntriesArgs %v and AppendEntriesReply %v ", rf.me, rf.state, rf.currentTerm, args, reply)
-
+	//落后
 	if args.Term < rf.currentTerm {
 		reply.Term, reply.Success = rf.currentTerm, false
 		return
 	}
-	// 当前节点是leader节点
+	// 当前节点是leader节点，比raft原节点的Term先进一些
 	if args.Term > rf.currentTerm {
 		rf.currentTerm, rf.votedFor = args.Term, -1
+		rf.persist()
 	}
 	rf.ChangeState(Follower)
 	rf.electionTimer.Reset(RandomElectionTimeout())
 
-	// 如果当前节点上一条日志小于当前服务器的第一条日志索引，说明当前节点落后一点
+	// 如果Leader节点上一条日志小于raft第一条日志索引，说明当前节点落后一点
 	// 直接当响应的Term设置为当前服务器任期
 	if args.PrevLogIndex < rf.getFirstLog().Index {
 		reply.Term, reply.Success = rf.currentTerm, false
@@ -140,7 +145,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs , reply *AppendEntriesRepl
 		// 如果当前的index起点已经大于等于raft节点中所有logs的长度，就直接冲这里开始复制
 		// 或者从某个日志开始Term不匹配也就找到了复制的位置
 		if entry.Index - firstLogIndex >= len(rf.logs) || rf.logs[entry.Index-firstLogIndex].Term != entry.Term {
-			rf.logs = append(rf.logs[:entry.Index - firstLogIndex], args.Entries[index:]...)
+			rf.logs = shrinkEntries(append(rf.logs[:entry.Index - firstLogIndex], args.Entries[index:]...))
+			rf.persist()
 			break
 		}
 	}
@@ -157,5 +163,68 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs , reply *AppendEntriesRepl
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	return ok
+}
+
+//快照保存的参数
+type InstallSnapshotArgs struct {
+	Term 				int
+	LeaderId			int
+	LastIncludeIndex	int
+	LastIncludeTerm		int
+	Data				[]byte
+}
+//保存快照返回当前任期
+type InstallSnapshotReply struct {
+	Term 				int
+}
+
+//初始化生成快照的函数 任期 id index 
+func (rf *Raft) genInstallSnapshotArgs() *InstallSnapshotArgs {
+	firstLog := rf.getFirstLog()
+	args := &InstallSnapshotArgs{
+		Term: 				rf.currentTerm,
+		LeaderId: 			rf.me,
+		LastIncludeIndex: 	firstLog.Index,
+		LastIncludeTerm: 	firstLog.Term,
+		Data :				rf.persister.ReadSnapshot(),
+	}
+	return args
+}
+//leader节点判断后决定对部分节点进行快照
+func(rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	defer DPrintf("{Node %v}'s state is {state %v, term %v}} after processing InstallSnapshot,  InstallSnapshotArgs %v and InstallSnapshotReply %v ", rf.me, rf.state, rf.currentTerm, args, reply)
+	reply.Term = rf.currentTerm
+
+	// leader判断逻辑，如果raft节点term状态比leade还大直接返回
+	if args.Term < rf.currentTerm {
+		return
+	}
+	if args.Term > rf.currentTerm {
+		rf.currentTerm, rf.votedFor = args.Term, -1
+		rf.persist()
+	}
+	rf.ChangeState(Follower)
+	rf.electionTimer.Reset(RandomElectionTimeout())
+
+	// 快照的索引比当前raft节点的同步index还要落后
+	if args.LastIncludeIndex <= rf.commitIndex {
+		return
+	}
+	go func() {
+		rf.applyCh <- ApplyMsg{
+			SnapshotValid: 		true,
+			Snapshot: 			args.Data,
+			SnapshotTerm: 		args.LastIncludeTerm,
+			SnapshotIndex: 		args.LastIncludeIndex,
+		}
+	}()
+}
+
+//return reply.Term为最新的那个Term
+func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply)bool {
+	ok := rf.peers[server].Call("Raft.InstallSnapshot",args,reply)
 	return ok
 }
