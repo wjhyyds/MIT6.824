@@ -180,6 +180,7 @@ func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
 }
 
 // returns "" or error string
+// 解析出快照里面的数据并将其赋值给raft节点，主要是两个 log和最后lastapplied的index
 func (cfg *config) ingestSnap(i int, snapshot []byte, index int) string {
 	if snapshot == nil {
 		log.Fatalf("nil snapshot")
@@ -199,9 +200,11 @@ func (cfg *config) ingestSnap(i int, snapshot []byte, index int) string {
 		return err
 	}
 	cfg.logs[i] = map[int]interface{}{}
+	//TODO3这里有答案
 	for j := 0; j < len(xlog); j++ {
 		cfg.logs[i][j] = xlog[j]
 	}
+	//应用log和下一个同步日志
 	cfg.lastApplied[i] = lastIncludedIndex
 	return ""
 }
@@ -216,12 +219,17 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	if rf == nil {
 		return // ???
 	}
-
+	// 这个channel里的数据到底是谁传入的？
 	for m := range applyCh {
 		err_msg := ""
 		if m.SnapshotValid {
 			cfg.mu.Lock()
-			err_msg = cfg.ingestSnap(i, m.Snapshot, m.SnapshotIndex)
+			//检查快照是否有效 这里的snapshot到底是谁构建的
+			// err_msg = cfg.ingestSnap(i, m.Snapshot, m.SnapshotIndex)
+			if rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
+				// 将m的快照应用到节点中
+				err_msg = cfg.ingestSnap(i, m.Snapshot, m.SnapshotIndex)
+			}
 			cfg.mu.Unlock()
 		} else if m.CommandValid {
 			if m.CommandIndex != cfg.lastApplied[i]+1 {
