@@ -55,7 +55,9 @@ func (ps *Persister) SaveStateAndSnapshot(raftstate []byte, snapshot []byte) {
 	defer ps.mu.Unlock()
 	//深克隆防止数据被篡改
 	ps.raftstate = clone(raftstate)
-	ps.snapshot = clone(snapshot)
+	if snapshot != nil {
+		ps.snapshot = clone(snapshot)
+	}
 }
 
 func (ps *Persister) ReadSnapshot() []byte {
