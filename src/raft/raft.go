@@ -108,6 +108,10 @@ func (rf *Raft) GetState() (int, bool) {
 	return rf.currentTerm, rf.state == Leader
 }
 
+// 获取raft节点log日志的大小
+func (rf *Raft) GetRaftStateSize() int{
+	return rf.persister.RaftStateSize()
+}
 // save Raft's persistent state to stable storage,
 // where it can later be retrieved after a crash and restart.
 // see paper's Figure 2 for a description of what should be persistent.
