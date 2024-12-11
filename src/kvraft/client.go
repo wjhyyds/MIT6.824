@@ -8,6 +8,9 @@ import "math/big"
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
+	leaderId	int
+	clientId	int64
+	commandId 	int64  
 }
 
 func nrand() int64 {
@@ -17,44 +20,39 @@ func nrand() int64 {
 	return x
 }
 
+//创建一个clerk客户端与服务端进行交互
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
-	ck := new(Clerk)
-	ck.servers = servers
-	// You'll have to add code here.
-	return ck
+	return &Clerk{
+		servers: 	servers,
+		leaderId: 	0,
+		clientId: 	nrand(),//这里取随机数会不会有问题TODO
+		commandId:  0, //每次自增
+	}
 }
 
-// fetch the current value for a key.
-// returns "" if the key does not exist.
-// keeps trying forever in the face of all other errors.
-//
-// you can send an RPC with code like this:
-// ok := ck.servers[i].Call("KVServer."+op, &args, &reply)
-//
-// the types of args and reply (including whether they are pointers)
-// must match the declared types of the RPC handler function's
-// arguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
-
-	// You will have to modify this function.
-	return ""
+	return ck.ExecuteCommand(&CommandArgs{Key: key, Op: OpGet})
 }
-
-// shared by Put and Append.
-//
-// you can send an RPC with code like this:
-// ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
-//
-// the types of args and reply (including whether they are pointers)
-// must match the declared types of the RPC handler function's
-// arguments. and reply must be passed as a pointer.
-func (ck *Clerk) PutAppend(key string, value string, op string) {
-	// You will have to modify this function.
-}
-
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+	ck.ExecuteCommand(&CommandArgs{Key: key, Value: value, Op: OpPut})
 }
 func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, "Append")
+	ck.ExecuteCommand(&CommandArgs{Key: key, Value: value, Op: OpAppend})
+}
+
+func (ck *Clerk) ExecuteCommand(args *CommandArgs ) string {
+	//获取标志着这个指令的唯一标识符，即进程ID和命令ID
+	args.ClientId, args.CommandId = ck.clientId, ck.commandId
+	for {
+		reply := new(CommandReply)
+		//如果调用失败了、不是leader了、超时了
+		if !ck.servers[ck.leaderId].Call("KVServer.ExecuteCommand",args, reply) || 
+			reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
+			ck.leaderId = (ck.leaderId + 1) % len(ck.servers)//找到底哪一个是leader
+			continue //TODO这里不用加锁用来并发控制吗
+		}
+		//防止重复
+		ck.commandId += 1
+		return reply.Value
+	}
 }
