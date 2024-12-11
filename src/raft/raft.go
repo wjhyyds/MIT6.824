@@ -74,6 +74,10 @@ type Raft struct {
 	replicatorCond []*sync.Cond
 }
 
+//获取当前协程的peer号
+func(rf *Raft) GetId() int {
+	return rf.me
+}
 func (rf *Raft) ChangeState(state NodeState) {
 	if rf.state == state {
 		return
@@ -416,7 +420,7 @@ func (rf *Raft) replicator(peer int) {
 	rf.replicatorCond[peer].L.Lock()
 	defer rf.replicatorCond[peer].L.Unlock()
 	for rf.killed() == false {
-		if !rf.needReplicating(peer) {
+		for !rf.needReplicating(peer) {
 			// 如果没有新的需要复制就等待
 			rf.replicatorCond[peer].Wait()
 		}
@@ -462,10 +466,11 @@ func (rf *Raft) applier() {
 		// 这个节点是什么，raft还是只有leader节点
 
 		for _,entry := range entries {
-			rf.applyCh <- ApplyMsg{
+			rf.applyCh <- ApplyMsg{//这里有写入applyCh
 				CommandValid: 	true,
 				Command:		entry.Command,
 				CommandIndex: 	entry.Index,
+				CommandTerm: 	entry.Term, //靠这两来唯一识别一个命令
 			}
 		}
 		rf.mu.Lock()
