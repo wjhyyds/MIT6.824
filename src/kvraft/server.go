@@ -1,6 +1,8 @@
 package kvraft
 
 import (
+	"bytes"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -119,6 +121,36 @@ func(kv *KVServer) applyLogToStateMachine(command Command) *CommandReply {
 	return reply
 }
 
+// 设置了Raft节点最大日志并且已经超日志了就制作快照
+func (kv *KVServer) needSnapshot() bool {
+	return kv.maxraftstate != -1 && kv.rf.GetRaftStateSize() >= kv.maxraftstate
+}
+
+func (kv *KVServer) takeSnapshot(index int) {
+	w := new(bytes.Buffer)//创建缓存区
+	e := labgob.NewEncoder(w) //为w创建一个编码区e
+	e.Encode(kv.stateMachine) 
+	e.Encode(kv.lastOperations) //将log和最后操作压入缓存
+	data := w.Bytes()
+	kv.rf.Snapshot(index, data) //将index对应的data创建快照
+}
+// 从快照中恢复相应状态
+func (kv *KVServer) restoreStateFromSnapshot(snapshot []byte) {
+	if snapshot == nil || len(snapshot) < 1 {
+		return	
+	}
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var stateMachine KV_dataset
+	var lastOperations map[int64]OperationContext
+	//如果这两个里面有空值就报错
+	if d.Decode(&stateMachine) != nil || d.Decode(&lastOperations) != nil {
+		panic("Failed to restore state from snapshot")
+	}
+	kv.stateMachine = &stateMachine
+	kv.lastOperations = lastOperations
+}
+
 func (kv *KVServer) applier() {
 	for kv.killed() == false {
 		select {
@@ -154,7 +186,21 @@ func (kv *KVServer) applier() {
 					ch := kv.getNotifyCh(message.CommandIndex)
 					ch <-reply
 				}
+				//如果log超了就需要快照
+				if kv.needSnapshot() {
+					kv.takeSnapshot(message.CommandIndex)
+				}
 				kv.mu.Unlock()
+
+			}else if message.SnapshotValid {
+				kv.mu.Lock()
+				if kv.rf.CondInstallSnapshot(message.SnapshotTerm,message.SnapshotIndex, message.Snapshot) {
+					kv.restoreStateFromSnapshot(message.Snapshot)
+					kv.lastApplied = message.SnapshotIndex
+				}
+				kv.mu.Unlock()
+			}else {
+				panic(fmt.Sprintf("Invalid ApplyMsg %v", message))
 			}
 		}
 	}
@@ -188,6 +234,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 		lastOperations: make(map[int64]OperationContext),
 		notifyChs: 		make(map[int]chan *CommandReply),
 	}
+	kv.restoreStateFromSnapshot(persister.ReadSnapshot())
 	go kv.applier()
 	return kv
 }
